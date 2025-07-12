@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+*.egg-info/
+dist/
+build/
+
+# Models (download separately)
+models/
+downloads/
+*.safetensors
+*.ckpt
+*.pth
+
+# Output files
+output/
+results/
+*.png
+*.jpg
+*.jpeg
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+docs/
+
+# Logs
+*.log
+wandb/
+
+# Test files
+test/
+tests/
+input/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
