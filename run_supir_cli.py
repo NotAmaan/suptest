@@ -1,6 +1,7 @@
 import torch.cuda
 import argparse
 from SUPIR.util import create_SUPIR_model, PIL2Tensor, Tensor2PIL, convert_dtype
+from SUPIR.auto_config import get_optimal_tile_config, get_optimal_dtype_config, print_config
 from PIL import Image
 import os
 from torch.nn.functional import interpolate
@@ -48,12 +49,31 @@ def parse_arguments():
 
     parser.add_argument("--sampler_tile_size", type=int, default=128, help="Tile size for TiledRestoreEDMSampler")
     parser.add_argument("--sampler_tile_stride", type=int, default=64, help="Tile stride for TiledRestoreEDMSampler")
+    
+    parser.add_argument("--auto_config", action='store_true', default=False, help="Automatically configure tile sizes based on GPU")
 
     return parser.parse_args()
 
 # =====================================================================
 def setup_model(args, device):
     
+    # Auto-configure if requested
+    if args.auto_config:
+        tile_config = get_optimal_tile_config()
+        dtype_config = get_optimal_dtype_config()
+        print_config(tile_config, dtype_config)
+        
+        # Override args with auto-detected values
+        args.encoder_tile_size = tile_config['encoder_tile_size']
+        args.decoder_tile_size = tile_config['decoder_tile_size']
+        args.sampler_tile_size = tile_config['sampler_tile_size']
+        args.sampler_tile_stride = tile_config['sampler_tile_stride']
+        args.ae_dtype = dtype_config['ae_dtype']
+        args.diff_dtype = dtype_config['diff_dtype']
+        
+        # Set number of workers for tiled VAE
+        if 'num_parallel_workers' in tile_config:
+            os.environ['SUPIR_PARALLEL_WORKERS'] = str(tile_config['num_parallel_workers'])
 
     # load the config
     if args.sampler_mode == "TiledRestoreEDMSampler":
@@ -68,13 +88,31 @@ def setup_model(args, device):
     if args.loading_half_params:
         model = model.half()
     if args.use_tile_vae:
-        model.init_tile_vae(encoder_tile_size=args.encoder_tile_size, decoder_tile_size=args.decoder_tile_size)
+        if args.auto_config:
+            # Use auto-detected number of workers
+            model.init_tile_vae(
+                encoder_tile_size=args.encoder_tile_size, 
+                decoder_tile_size=args.decoder_tile_size,
+                num_parallel_workers=tile_config.get('num_parallel_workers', 2)
+            )
+        else:
+            model.init_tile_vae(encoder_tile_size=args.encoder_tile_size, decoder_tile_size=args.decoder_tile_size)
     
     model.ae_dtype = convert_dtype(args.ae_dtype)
     model.model.dtype = convert_dtype(args.diff_dtype)
 
     # move the model to device (cuda or cpu)
     model = model.to(device)
+    
+    # Try to compile the model for better performance (PyTorch 2.0+)
+    if torch.__version__ >= "2.0.0" and device != "cpu":
+        try:
+            print("Compiling model with torch.compile()...")
+            model.model = torch.compile(model.model, mode="reduce-overhead")
+            print("✓ Model compiled successfully")
+        except Exception as e:
+            print(f"torch.compile() failed: {e}")
+            print("Continuing without compilation")
 
     # if using TiledRestoreEDMSampler
     if args.sampler_mode == "TiledRestoreEDMSampler":

@@ -51,7 +51,7 @@ RUN chmod +x start.sh
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
-ENV PYTHONPATH="${PYTHONPATH}:${WORKSPACE_DIR}"
+ENV PYTHONPATH="${WORKSPACE_DIR}:${PYTHONPATH:-}"
 
 # Update model paths to use /workspace mount
 ENV MODEL_BASE_PATH="/workspace/models"

@@ -12,7 +12,30 @@ def get_state_dict(d):
     return d.get('state_dict', d)
 
 
-def load_state_dict(ckpt_path, location='cpu'):
+def load_state_dict(ckpt_path, location='cpu', use_cache=True):
+    # Try to use cached version first
+    if use_cache:
+        try:
+            from SUPIR.model_loader import get_cached_model
+            
+            # Identify model type from path
+            model_name = None
+            if 'SDXL' in ckpt_path or 'juggernaut' in ckpt_path:
+                model_name = 'SDXL'
+            elif 'SUPIR-v0Q' in ckpt_path:
+                model_name = 'SUPIR_Q'
+            elif 'SUPIR-v0F' in ckpt_path:
+                model_name = 'SUPIR_F'
+            
+            if model_name:
+                cached = get_cached_model(model_name)
+                if cached is not None:
+                    print(f'Using cached {model_name} from CPU memory', color.GREEN)
+                    return cached
+        except ImportError:
+            pass
+    
+    # Normal loading
     _, extension = os.path.splitext(ckpt_path)
     if extension.lower() == ".safetensors":
         import safetensors.torch

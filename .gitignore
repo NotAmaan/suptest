@@ -175,3 +175,4 @@ defaults.json
 ._test_gradio.py
 *.DS_Store
 SUPIR/modules/._SUPIR_v0.py
+logs.txt

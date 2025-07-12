@@ -37,5 +37,6 @@ wandb==0.19.10
 webdataset==0.2.111
 # xformers==0.0.32
 xxhash
+psutil>=5.9.0
 # runpod>=1.7.0
 

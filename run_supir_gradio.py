@@ -18,6 +18,7 @@ import json
 
 # from huggingface_hub import snapshot_download
 from Y7.verify_model import check_smolvlm_model_files, check_supir_model_files, check_clip_model_file, check_for_any_sdxl_model
+from SUPIR.auto_config import get_optimal_tile_config, get_optimal_dtype_config, print_config
 
 # macOS shit, just in case some pytorch ops are not supported on mps yes, fallback to cpu
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -156,6 +157,22 @@ def load_supir_model(sampler_type,
         sampler_config_path = TiledRestoreEDMSampler_config
 
     print(f"Loading SUPIR model from config: {sampler_config_path}")
+    
+    # Auto-configure if tile sizes are at default values
+    if encoder_tile_size == 512 and decoder_tile_size == 64:
+        tile_config = get_optimal_tile_config()
+        dtype_config = get_optimal_dtype_config()
+        print_config(tile_config, dtype_config)
+        
+        # Use auto-detected values
+        encoder_tile_size = tile_config['encoder_tile_size']
+        decoder_tile_size = tile_config['decoder_tile_size']
+        num_workers = tile_config.get('num_parallel_workers', num_workers)
+        
+        # Update dtypes if using defaults
+        if ae_dtype == "bf16" and diff_dtype == "fp16":
+            ae_dtype = dtype_config['ae_dtype']
+            diff_dtype = dtype_config['diff_dtype']
 
     model = create_SUPIR_model(sampler_config_path, SUPIR_sign=supir_model_type)
     if loading_half_params:
@@ -168,12 +185,28 @@ def load_supir_model(sampler_type,
     # Set the precision for the diffusion component (unet)
     model.model.dtype = convert_dtype(diff_dtype)
     model = model.to(device)
+    
+    # Try to compile the model for better performance (PyTorch 2.0+)
+    if torch.__version__ >= "2.0.0" and device != "cpu":
+        try:
+            print("Compiling model with torch.compile()...", color.CYAN)
+            model.model = torch.compile(model.model, mode="reduce-overhead")
+            print("✓ Model compiled successfully", color.GREEN)
+        except Exception as e:
+            print(f"torch.compile() failed: {e}", color.YELLOW)
+            print("Continuing without compilation", color.YELLOW)
 
     # if using TiledRestoreEDMSampler - set sampler tile size and stride   
     if sampler_type == "TiledRestoreEDMSampler":
         # set/override tile size and tile stride
-        model.sampler.tile_size = sampler_tile_size
-        model.sampler.tile_stride = sampler_tile_stride
+        # Use auto-configured values if using defaults
+        if sampler_tile_size == 128 and sampler_tile_stride == 64 and encoder_tile_size != 512:
+            # We already auto-configured, use those values
+            model.sampler.tile_size = tile_config.get('sampler_tile_size', sampler_tile_size)
+            model.sampler.tile_stride = tile_config.get('sampler_tile_stride', sampler_tile_stride)
+        else:
+            model.sampler.tile_size = sampler_tile_size
+            model.sampler.tile_stride = sampler_tile_stride
 
     return model
 
@@ -865,7 +898,8 @@ def create_launch_gradio(listen_on_network, port=None):
                             with gr.Row():
                                 edm_steps = gr.Slider(minimum=10, maximum=100, value=supir_defaults.get('edm_steps', 50), step=1, label="Steps") # sampler steps
                                 s_churn = gr.Slider(minimum=0, maximum=20, value=supir_defaults.get('s_churn', 5), step=1, label="S-Churn") # stochastic churn
-                                s_noise = gr.Slider(minimum=1.0, maximum=2.0, value=supir_defaults.get('s_noise', 1.003), step=0.001, label="S-Noise") # stochastic noise                        
+                                s_noise = gr.Slider(minimum=1.0, maximum=2.0, value=supir_defaults.get('s_noise', 1.003), step=0.001, label="S-Noise") # stochastic noise
+                            gr.Markdown("💡 **Tip**: Reduce Steps to 30-35 for ~40% faster processing with minimal quality loss")                        
 
                         
                                                          
@@ -1087,11 +1121,19 @@ def main():
     # Set model path to global SMOLVLM_MODEL_PATH
     # required by generate_caption_streaming() and generate_caption_non_streaming()
     global SMOLVLM_MODEL_PATH
+    
+    # Debug: Print current working directory and check paths
+    print(f"Current working directory: {os.getcwd()}", color.CYAN)
+    print(f"Checking for /workspace/models existence: {os.path.exists('/workspace/models')}", color.CYAN)
+    print(f"Checking for /workspace/models/SmolVLM-500M-Instruct: {os.path.exists('/workspace/models/SmolVLM-500M-Instruct')}", color.CYAN)
+    
     # Use /workspace/models for RunPod deployment, fallback to local models
     if os.path.exists("/workspace/models/SmolVLM-500M-Instruct"):
         SMOLVLM_MODEL_PATH = "/workspace/models/SmolVLM-500M-Instruct"
+        print(f"Using RunPod model path: {SMOLVLM_MODEL_PATH}", color.GREEN)
     else:
         SMOLVLM_MODEL_PATH = "models/SmolVLM-500M-Instruct"
+        print(f"Using local model path: {SMOLVLM_MODEL_PATH}", color.YELLOW)
     
     
     # Check SMOLVLM MODEL FILES ARE OKAY
@@ -1102,11 +1144,22 @@ def main():
         sys.exit(1)  # Exit with error code 1        
 
 
+    # Preload models to CPU if enough RAM is available
+    try:
+        from SUPIR.model_loader import preload_all_models_parallel
+        preload_all_models_parallel()
+    except Exception as e:
+        print(f"Model preloading failed: {e}", color.YELLOW)
+    
     # Check for models in /workspace/models or local models directory
+    print(f"\nChecking for model directories...", color.CYAN)
+    
     if os.path.exists("/workspace/models/SUPIR"):
         SUPIR_PATH = "/workspace/models/SUPIR"
+        print(f"Found SUPIR models at: {SUPIR_PATH}", color.GREEN)
     else:
         SUPIR_PATH = "models/SUPIR"
+        print(f"Using local SUPIR path: {SUPIR_PATH}", color.YELLOW)
     filesokay = check_supir_model_files(SUPIR_PATH)
     if not filesokay:
         print(f"ERROR: Required SUPIR files not found for at {SUPIR_PATH}", color.MAGENTA)
@@ -1114,8 +1167,10 @@ def main():
 
     if os.path.exists("/workspace/models/CLIP1"):
         CLIP1_PATH = "/workspace/models/CLIP1"
+        print(f"Found CLIP1 models at: {CLIP1_PATH}", color.GREEN)
     else:
         CLIP1_PATH = "models/CLIP1"
+        print(f"Using local CLIP1 path: {CLIP1_PATH}", color.YELLOW)
     filesokay = check_clip_model_file(CLIP1_PATH)
     if not filesokay:
         print(f"ERROR: Required CLIP1 file not found for at {CLIP1_PATH}", color.MAGENTA)
@@ -1123,8 +1178,10 @@ def main():
 
     if os.path.exists("/workspace/models/CLIP2"):
         CLIP2_PATH = "/workspace/models/CLIP2"
+        print(f"Found CLIP2 models at: {CLIP2_PATH}", color.GREEN)
     else:
         CLIP2_PATH = "models/CLIP2"
+        print(f"Using local CLIP2 path: {CLIP2_PATH}", color.YELLOW)
     filesokay = check_clip_model_file(CLIP2_PATH)
     if not filesokay:
         print(f"ERROR: Required CLIP2 file not found for at {CLIP2_PATH}", color.MAGENTA)
@@ -1133,8 +1190,10 @@ def main():
     # for sdxl we will just check for any safetensors file (since any can be used)
     if os.path.exists("/workspace/models/SDXL"):
         SDXL_PATH = "/workspace/models/SDXL"
+        print(f"Found SDXL models at: {SDXL_PATH}", color.GREEN)
     else:
         SDXL_PATH = "models/SDXL"
+        print(f"Using local SDXL path: {SDXL_PATH}", color.YELLOW)
     filesokay = check_for_any_sdxl_model(SDXL_PATH)
     if not filesokay:
         print(f"ERROR: No sdxl safetensors file not found for at {SDXL_PATH}", color.MAGENTA)
