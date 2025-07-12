@@ -1,5 +1,6 @@
-# Use RunPod's PyTorch base image for dual-mode compatibility
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+# Use official PyTorch image with CUDA 12.8 for RTX 5090 compatibility
+# Note: Using PyTorch 2.5.1 which has better CUDA 12.8 support
+FROM pytorch/pytorch:2.5.1-cuda12.8-cudnn9-devel
 
 # Set Python unbuffered for better logging
 ENV PYTHONUNBUFFERED=1
@@ -27,14 +28,17 @@ WORKDIR $WORKSPACE_DIR
 # Copy requirements first for better caching
 COPY requirements.txt .
 
-# Update pip
-RUN pip3 install --upgrade pip
+# Update pip and install essential packages
+RUN pip install --upgrade pip
 
-# PyTorch is already installed in the base image, just install xformers
-RUN pip3 install -U xformers --index-url https://download.pytorch.org/whl/cu124
+# Install xformers with CUDA 12.8 support
+RUN pip install -U xformers --index-url https://download.pytorch.org/whl/cu128
+
+# Install RunPod SDK (needed for serverless mode)
+RUN pip install runpod>=1.7.0
 
 # Install remaining requirements
-RUN pip3 install -r requirements.txt
+RUN pip install -r requirements.txt
 
 # Copy project files
 COPY . .
@@ -52,7 +56,7 @@ ENV PYTHONPATH="${PYTHONPATH}:${WORKSPACE_DIR}"
 ENV MODEL_BASE_PATH="/workspace/models"
 
 # Verify CUDA installation
-RUN python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
+RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
 
 # Use start script for dual-mode support
 CMD ["./start.sh"]
