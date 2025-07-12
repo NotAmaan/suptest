@@ -1087,7 +1087,11 @@ def main():
     # Set model path to global SMOLVLM_MODEL_PATH
     # required by generate_caption_streaming() and generate_caption_non_streaming()
     global SMOLVLM_MODEL_PATH
-    SMOLVLM_MODEL_PATH = f"models/SmolVLM-500M-Instruct"
+    # Use /workspace/models for RunPod deployment, fallback to local models
+    if os.path.exists("/workspace/models/SmolVLM-500M-Instruct"):
+        SMOLVLM_MODEL_PATH = "/workspace/models/SmolVLM-500M-Instruct"
+    else:
+        SMOLVLM_MODEL_PATH = "models/SmolVLM-500M-Instruct"
     
     
     # Check SMOLVLM MODEL FILES ARE OKAY
@@ -1098,26 +1102,39 @@ def main():
         sys.exit(1)  # Exit with error code 1        
 
 
-    SUPIR_PATH = "models/SUPIR"
+    # Check for models in /workspace/models or local models directory
+    if os.path.exists("/workspace/models/SUPIR"):
+        SUPIR_PATH = "/workspace/models/SUPIR"
+    else:
+        SUPIR_PATH = "models/SUPIR"
     filesokay = check_supir_model_files(SUPIR_PATH)
     if not filesokay:
         print(f"ERROR: Required SUPIR files not found for at {SUPIR_PATH}", color.MAGENTA)
         print("Please download the model files manually and try again.", color.MAGENTA)
 
-    CLIP1_PATH = "models/CLIP1"
+    if os.path.exists("/workspace/models/CLIP1"):
+        CLIP1_PATH = "/workspace/models/CLIP1"
+    else:
+        CLIP1_PATH = "models/CLIP1"
     filesokay = check_clip_model_file(CLIP1_PATH)
     if not filesokay:
         print(f"ERROR: Required CLIP1 file not found for at {CLIP1_PATH}", color.MAGENTA)
         print("Please download the model files manually and try again.", color.MAGENTA)
 
-    CLIP2_PATH = "models/CLIP2"
+    if os.path.exists("/workspace/models/CLIP2"):
+        CLIP2_PATH = "/workspace/models/CLIP2"
+    else:
+        CLIP2_PATH = "models/CLIP2"
     filesokay = check_clip_model_file(CLIP2_PATH)
     if not filesokay:
         print(f"ERROR: Required CLIP2 file not found for at {CLIP2_PATH}", color.MAGENTA)
         print("Please download the model files manually and try again.", color.MAGENTA)
 
     # for sdxl we will just check for any safetensors file (since any can be used)
-    SDXL_PATH = "models/SDXL"
+    if os.path.exists("/workspace/models/SDXL"):
+        SDXL_PATH = "/workspace/models/SDXL"
+    else:
+        SDXL_PATH = "models/SDXL"
     filesokay = check_for_any_sdxl_model(SDXL_PATH)
     if not filesokay:
         print(f"ERROR: No sdxl safetensors file not found for at {SDXL_PATH}", color.MAGENTA)
