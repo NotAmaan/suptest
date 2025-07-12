@@ -1,6 +1,7 @@
 # Use official PyTorch image with CUDA 12.8 for RTX 5090 compatibility
 # Note: Using PyTorch 2.5.1 which has better CUDA 12.8 support
-FROM pytorch/pytorch:2.5.1-cuda12.8-cudnn9-devel
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+
 
 # Set Python unbuffered for better logging
 ENV PYTHONUNBUFFERED=1

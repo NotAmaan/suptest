@@ -4,8 +4,8 @@
 
 # Configuration
 REGISTRY="ghcr.io"
-GITHUB_USERNAME="your-github-username"  # TODO: Replace with your GitHub username
-REPO_NAME="supir-demo"
+GITHUB_USERNAME="notamaan"  # TODO: Replace with your GitHub username
+REPO_NAME="suptest"
 IMAGE_NAME="$REGISTRY/$GITHUB_USERNAME/$REPO_NAME"
 
 # Get version from git tag or use 'latest'
