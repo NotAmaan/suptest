@@ -1,6 +1,6 @@
 # =========================================================================
 # Stage 1: The Builder
-# Use the large development image which has the CUDA compiler (nvcc)
+# Use the exact RunPod development image you need for CUDA 12.8
 # =========================================================================
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04 AS builder
 
@@ -12,7 +12,7 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Create a virtual environment to hold all our python packages.
-# This makes it very easy to copy them to the next stage.
+# This makes it very easy and clean to copy them to the next stage.
 RUN python3 -m venv /app/venv
 # Activate the venv for all subsequent RUN commands in this stage
 ENV PATH="/app/venv/bin:$PATH"
@@ -37,25 +37,32 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # =========================================================================
 # Stage 2: The Final Production Image
-# Use the smaller 'runtime' image which does NOT have the bulky compiler
+# THIS IS THE KEY CORRECTION FOR YOUR REQUIREMENT
 # =========================================================================
-FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-runtime-ubuntu22.04
+# Use the official, minimal NVIDIA runtime image for CUDA 12.8.1
+# This image is guaranteed to exist and is the correct partner for your builder.
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 WORKDIR /app
 
-# Install only the essential RUNTIME system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install Python 3.11 and other essential runtime dependencies.
+# The base NVIDIA image is minimal and does not include Python.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3-pip \
     libgl1-mesa-glx \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the entire virtual environment with all installed packages from the builder stage
+# Copy the entire Python virtual environment with all installed packages from the builder stage
 COPY --from=builder /app/venv /app/venv
 
 # Copy your application's source code
 COPY . .
 
-# Activate the virtual environment by setting the PATH
+# Activate the virtual environment by setting the PATH. This makes `python` and `pip`
+# from our venv the default for the container.
 ENV PATH="/app/venv/bin:$PATH"
 
 # Set runtime environment variables
