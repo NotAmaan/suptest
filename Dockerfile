@@ -1,67 +1,71 @@
-# Use official PyTorch image with CUDA 12.8 for RTX 5090 compatibility
-# Note: Using PyTorch 2.5.1 which has better CUDA 12.8 support
-FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
+# =========================================================================
+# Stage 1: The Builder
+# Use the large development image which has the CUDA compiler (nvcc)
+# =========================================================================
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04 AS builder
 
-# Set Python unbuffered for better logging
-ENV PYTHONUNBUFFERED=1
-
-# Set mode and workspace directory
-ARG MODE_TO_RUN="pod"
-ENV MODE_TO_RUN=$MODE_TO_RUN
 WORKDIR /app
 
-# Install system dependencies in a single layer
+# Install build-time system dependencies (just git is needed)
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    git \
-    wget \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender-dev \
-    libgomp1 && \
+    apt-get install -y --no-install-recommends git && \
     rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip
+# Create a virtual environment to hold all our python packages.
+# This makes it very easy to copy them to the next stage.
+RUN python3 -m venv /app/venv
+# Activate the venv for all subsequent RUN commands in this stage
+ENV PATH="/app/venv/bin:$PATH"
+
+# Upgrade pip and install wheels
 RUN pip install --no-cache-dir --upgrade pip
-
-# Copy requirements for caching
-COPY requirements.txt .
-
-# Install core and specialized Python packages
-# Using --no-cache-dir to reduce image size
 RUN pip install --no-cache-dir -U xformers --index-url https://download.pytorch.org/whl/cu128
-RUN pip install --no-cache-dir runpod>=1.7.0
 
-# Install Flash Attention 2 from source and cleanup
+# Build Flash Attention from source. This is the step that needs the -devel image.
 ENV FLASH_ATTENTION_FORCE_BUILD=TRUE
+# We clone, build, and then remove the source to save space
 RUN git clone https://github.com/Dao-AILab/flash-attention.git && \
     cd flash-attention && \
     pip install --no-cache-dir . && \
     cd .. && \
     rm -rf flash-attention
 
-# Install the remaining requirements
+# Finally, install the rest of your application's requirements
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code
+
+# =========================================================================
+# Stage 2: The Final Production Image
+# Use the smaller 'runtime' image which does NOT have the bulky compiler
+# =========================================================================
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-runtime-ubuntu22.04
+
+WORKDIR /app
+
+# Install only the essential RUNTIME system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the entire virtual environment with all installed packages from the builder stage
+COPY --from=builder /app/venv /app/venv
+
+# Copy your application's source code
 COPY . .
 
-# Make start script executable
-RUN chmod +x start.sh
+# Activate the virtual environment by setting the PATH
+ENV PATH="/app/venv/bin:$PATH"
 
-# Set environment variables
+# Set runtime environment variables
+ENV PYTHONUNBUFFERED=1
 ENV CUDA_HOME=/usr/local/cuda
-ENV PATH="${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
-# Update model paths to use /workspace mount
-ENV MODEL_BASE_PATH="/workspace/models"
+# Make your start script executable
+RUN chmod +x start.sh
 
-# Verify CUDA installation
-RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
-
-# Use start script for dual-mode support
+# Set the command to run your application
 CMD ["./start.sh"]
