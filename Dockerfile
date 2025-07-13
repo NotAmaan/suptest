@@ -2,17 +2,17 @@
 # Note: Using PyTorch 2.5.1 which has better CUDA 12.8 support
 FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
-
 # Set Python unbuffered for better logging
 ENV PYTHONUNBUFFERED=1
 
 # Set mode and workspace directory
 ARG MODE_TO_RUN="pod"
 ENV MODE_TO_RUN=$MODE_TO_RUN
-ENV WORKSPACE_DIR=/app
+WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
+# Install system dependencies in a single layer
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     git \
     wget \
     libgl1-mesa-glx \
@@ -20,28 +20,32 @@ RUN apt-get update && apt-get install -y \
     libsm6 \
     libxext6 \
     libxrender-dev \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+    libgomp1 && \
+    rm -rf /var/lib/apt/lists/*
 
-# Set working directory
-WORKDIR $WORKSPACE_DIR
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip
 
-# Copy requirements first for better caching
+# Copy requirements for caching
 COPY requirements.txt .
 
-# Update pip and install essential packages
-RUN pip install --upgrade pip
+# Install core and specialized Python packages
+# Using --no-cache-dir to reduce image size
+RUN pip install --no-cache-dir -U xformers --index-url https://download.pytorch.org/whl/cu128
+RUN pip install --no-cache-dir runpod>=1.7.0
 
-# Install xformers with CUDA 12.8 support
-RUN pip install -U xformers --index-url https://download.pytorch.org/whl/cu128
+# Install Flash Attention 2 from source and cleanup
+ENV FLASH_ATTENTION_FORCE_BUILD=TRUE
+RUN git clone https://github.com/Dao-AILab/flash-attention.git && \
+    cd flash-attention && \
+    pip install --no-cache-dir . && \
+    cd .. && \
+    rm -rf flash-attention
 
-# Install RunPod SDK (needed for serverless mode)
-RUN pip install runpod>=1.7.0
+# Install the remaining requirements
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install remaining requirements
-RUN pip install -r requirements.txt
-
-# Copy project files
+# Copy the rest of the application code
 COPY . .
 
 # Make start script executable
@@ -51,7 +55,7 @@ RUN chmod +x start.sh
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH="${CUDA_HOME}/bin:${PATH}"
 ENV LD_LIBRARY_PATH="${CUDA_HOME}/lib64:${LD_LIBRARY_PATH}"
-ENV PYTHONPATH="${PYTHONPATH}:${WORKSPACE_DIR}"
+ENV PYTHONPATH="${PYTHONPATH}:/app"
 
 # Update model paths to use /workspace mount
 ENV MODEL_BASE_PATH="/workspace/models"
