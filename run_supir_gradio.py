@@ -10,14 +10,14 @@ import time
 import glob
 from threading import Thread
 from transformers.generation.streamers import TextIteratorStreamer
-from SUPIR.util import create_SUPIR_model, PIL2Tensor, Tensor2PIL, convert_dtype
+from SUPIR.util import create_SUPIR_model, PIL2Tensor, Tensor2PIL, convert_dtype, get_available_sdxl_models
 import gc
 import ctypes
 import platform
 import json
 
 # from huggingface_hub import snapshot_download
-from Y7.verify_model import check_smolvlm_model_files, check_supir_model_files, check_clip_model_file, check_for_any_sdxl_model
+from Y7.verify_model import check_smolvlm_model_files, check_supir_model_files, check_clip_model_file, check_for_any_sdxl_model, get_available_sdxl_models
 
 # macOS shit, just in case some pytorch ops are not supported on mps yes, fallback to cpu
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
@@ -65,6 +65,7 @@ SUPIR_AE_DTYPE = 'ae_dtype'
 SUPIR_DIFF_DTYPE = 'diff_dtype'
 SUPIR_DIFF_SAMPLER_TILE_SIZE = 'sampler_tile_size'
 SUPIR_DIFF_SAMPLER_TILE_STRIDE = 'sampler_tile_stride'
+SUPIR_SDXL_MODEL = 'sdxl_model'
 
 # Default prompts (the positive is appended to the main caption (whether it exists or not))
 default_positive_prompt = 'Cinematic, High Contrast, highly detailed, taken using a Canon EOS R camera, hyper detailed photo - realistic maximum detail, 32k, Color Grading, ultra HD, extreme meticulous detailing, skin pore detailing, hyper sharpness, perfect without deformations.'
@@ -144,7 +145,8 @@ def load_supir_model(sampler_type,
                decoder_tile_size=64,
                num_workers=1,
                sampler_tile_size=128,
-               sampler_tile_stride=64):
+               sampler_tile_stride=64,
+               sdxl_model=None):
     
     device = get_device()
 
@@ -156,8 +158,21 @@ def load_supir_model(sampler_type,
         sampler_config_path = TiledRestoreEDMSampler_config
 
     print(f"Loading SUPIR model from config: {sampler_config_path}")
+    
+    # Prepare custom SDXL path if specified
+    custom_sdxl_path = None
+    if sdxl_model and sdxl_model != "Default (from config)":
+        # Check for model in workspace or local directory
+        if os.path.exists("/workspace/models/SDXL"):
+            custom_sdxl_path = os.path.join("/workspace/models/SDXL", sdxl_model)
+        else:
+            custom_sdxl_path = os.path.join("models/SDXL", sdxl_model)
+        
+        if not os.path.exists(custom_sdxl_path):
+            print(f"Warning: SDXL model not found at {custom_sdxl_path}, using default from config")
+            custom_sdxl_path = None
 
-    model = create_SUPIR_model(sampler_config_path, SUPIR_sign=supir_model_type)
+    model = create_SUPIR_model(sampler_config_path, SUPIR_sign=supir_model_type, custom_sdxl_path=custom_sdxl_path)
     if loading_half_params:
         model = model.half()
     if use_tile_vae:
@@ -292,7 +307,8 @@ def process_supir(
             sampler_tile_size,
             sampler_tile_stride,            
             a_prompt, 
-            n_prompt
+            n_prompt,
+            sdxl_model
         ):
     
     # Check if input_image is provided, if not, quit and show msg
@@ -354,6 +370,7 @@ def process_supir(
     print(f"sampler_tile_stride: {sampler_tile_stride}", color.YELLOW)
     print(f"a_prompt: {a_prompt}", color.YELLOW)
     print(f"n_prompt: {n_prompt}", color.YELLOW)
+    print(f"sdxl_model: {sdxl_model}", color.YELLOW)
 
 
     start_time = time.time()
@@ -383,7 +400,8 @@ def process_supir(
         SUPIR_SETTINGS.get(SUPIR_AE_DTYPE) != ae_dtype or
         SUPIR_SETTINGS.get(SUPIR_DIFF_DTYPE) != diff_dtype or
         SUPIR_SETTINGS.get(SUPIR_DIFF_SAMPLER_TILE_SIZE) != sampler_tile_size or
-        SUPIR_SETTINGS.get(SUPIR_DIFF_SAMPLER_TILE_STRIDE) != sampler_tile_stride):
+        SUPIR_SETTINGS.get(SUPIR_DIFF_SAMPLER_TILE_STRIDE) != sampler_tile_stride or
+        SUPIR_SETTINGS.get(SUPIR_SDXL_MODEL) != sdxl_model):
 
         SUPIR_MODEL = load_supir_model(
             sampler_type=sampler_type,
@@ -396,7 +414,8 @@ def process_supir(
             ae_dtype=ae_dtype,
             diff_dtype=diff_dtype,
             sampler_tile_size=sampler_tile_size,
-            sampler_tile_stride=sampler_tile_stride 
+            sampler_tile_stride=sampler_tile_stride,
+            sdxl_model=sdxl_model
         )
 
         # Store current settings for future comparison
@@ -411,7 +430,8 @@ def process_supir(
             SUPIR_AE_DTYPE: ae_dtype,
             SUPIR_DIFF_DTYPE: diff_dtype,
             SUPIR_DIFF_SAMPLER_TILE_SIZE: sampler_tile_size,
-            SUPIR_DIFF_SAMPLER_TILE_STRIDE: sampler_tile_stride
+            SUPIR_DIFF_SAMPLER_TILE_STRIDE: sampler_tile_stride,
+            SUPIR_SDXL_MODEL: sdxl_model
         }
 
     # Convert to PIL if needed
@@ -802,6 +822,21 @@ def create_launch_gradio(listen_on_network, port=None):
                                     value=supir_defaults.get('sampler_type', 'TiledRestoreEDMSampler'),
                                     label="Sampler Type"
                                 )
+                            
+                            # SDXL Model selection
+                            # Determine SDXL path
+                            if os.path.exists("/workspace/models/SDXL"):
+                                sdxl_path = "/workspace/models/SDXL"
+                            else:
+                                sdxl_path = "models/SDXL"
+                            available_sdxl_models = get_available_sdxl_models(sdxl_path)
+                            sdxl_choices = ["Default (from config)"] + available_sdxl_models
+                            sdxl_model = gr.Dropdown(
+                                choices=sdxl_choices,
+                                value=supir_defaults.get('sdxl_model', "Default (from config)"),
+                                label="SDXL Base Model"
+                            )
+                            
                             with gr.Row():
                                 
 
@@ -934,6 +969,7 @@ def create_launch_gradio(listen_on_network, port=None):
                 | `Load Model fp16` | Loads the SUPIR model weights in half precision (FP16). Reduces VRAM usage and increases speed at the cost of slight precision loss. |
                 | `Model Type` | - `Q model (Quality)`: <br>Optimized for moderate - heavy degradations. High generalization, high image quality in most cases, <br>but may overcorrect or hallucinate when used on lightly degraded images. <br>- `F model (Fidelity)`:<br>Optimized for mild degradations, preserving fine details and structure. Ideal for high-fidelity tasks with subtle restoration needs. |
                 | `Sampler Type` | - `RestoreEDMSampler`: Uses more VRAM. <br>- `TiledRestoreEDMSampler`: Uses less VRAM. |
+                | `SDXL Base Model` | Select which SDXL base model to use. Default uses the model specified in the YAML config. Other options are models found in `models/SDXL/`. |
                 | `AE dType` | Autoencoder precision. [`bf16`, `fp32`]|
                 | `Diffusion dType` | Diffusion precision. Overrides the default precision of the loaded model, unless `Load Model fp16` is already set.<br>[`bf16`, `fp16`,`fp32`] |
                 | `Seed` | Fixed or random seed. |
@@ -1044,7 +1080,8 @@ def create_launch_gradio(listen_on_network, port=None):
                 sampler_tile_size,
                 sampler_tile_stride,
                 a_prompt, 
-                n_prompt
+                n_prompt,
+                sdxl_model
             ],        
             # The gradio component(s) where the function's return value(s) is displayed
             outputs=[output_slider, status_message] 

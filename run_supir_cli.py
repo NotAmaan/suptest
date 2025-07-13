@@ -1,6 +1,6 @@
 import torch.cuda
 import argparse
-from SUPIR.util import create_SUPIR_model, PIL2Tensor, Tensor2PIL, convert_dtype
+from SUPIR.util import create_SUPIR_model, PIL2Tensor, Tensor2PIL, convert_dtype, get_available_sdxl_models
 from PIL import Image
 import os
 from torch.nn.functional import interpolate
@@ -48,6 +48,11 @@ def parse_arguments():
 
     parser.add_argument("--sampler_tile_size", type=int, default=128, help="Tile size for TiledRestoreEDMSampler")
     parser.add_argument("--sampler_tile_stride", type=int, default=64, help="Tile stride for TiledRestoreEDMSampler")
+    
+    parser.add_argument("--sdxl_model", type=str, default=None, 
+                        help="Name of SDXL model file to use (e.g., 'juggernautXL_v9Rundiffusionphoto2.safetensors'). If not specified, uses default from config.")
+    parser.add_argument("--list_sdxl_models", action='store_true', 
+                        help="List available SDXL models and exit")
 
     return parser.parse_args()
 
@@ -61,8 +66,19 @@ def setup_model(args, device):
     else:
         config = "options/SUPIR_v0.yaml"
 
+    # Prepare custom SDXL path if specified
+    custom_sdxl_path = None
+    if args.sdxl_model:
+        custom_sdxl_path = os.path.join("models/SDXL", args.sdxl_model)
+        if not os.path.exists(custom_sdxl_path):
+            print(f"Error: SDXL model not found at {custom_sdxl_path}")
+            print("Available models:")
+            for model in get_available_sdxl_models():
+                print(f"  - {model}")
+            return None
+
     # create SUPIR model
-    model = create_SUPIR_model(config, SUPIR_sign=args.SUPIR_sign)
+    model = create_SUPIR_model(config, SUPIR_sign=args.SUPIR_sign, custom_sdxl_path=custom_sdxl_path)
 
     # precision settings
     if args.loading_half_params:
@@ -187,6 +203,18 @@ def main():
     
     # Parse arguments
     args = parse_arguments()
+    
+    # Handle --list_sdxl_models flag
+    if args.list_sdxl_models:
+        print("\nAvailable SDXL models:")
+        models = get_available_sdxl_models()
+        if not models:
+            print("  No SDXL models found in models/SDXL/")
+        else:
+            for model in models:
+                print(f"  - {model}")
+        return
+    
     print(args)
     
     # Create output directory if not exist
@@ -194,6 +222,8 @@ def main():
         
     # Setup SUPIR model
     SUPIR_model = setup_model(args, device)
+    if SUPIR_model is None:
+        return
     
     # Process the image
     result = process_image(SUPIR_model, args, device)

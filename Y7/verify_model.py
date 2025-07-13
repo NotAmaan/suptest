@@ -251,6 +251,17 @@ def check_for_any_sdxl_model(model_path):
             print(f"   └── {file_name}", color.GREEN)
         
         return True
+
+def get_available_sdxl_models(model_path):
+    """Get list of available SDXL model files in the directory"""
+    try:
+        all_files = os.listdir(model_path)
+        # Filter for .safetensors files and sort them
+        safetensor_files = sorted([f for f in all_files if f.endswith('.safetensors')])
+        return safetensor_files
+    except Exception as e:
+        print(f"Error accessing SDXL model directory: {str(e)}", color.RED)
+        return []
 # ==============================================================
 # def download_smolvlm_model_from_HF(model_path):
 #     """Download model from HuggingFace"""

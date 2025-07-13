@@ -31,7 +31,7 @@ def create_model(config_path):
     return model
 
 
-def create_SUPIR_model(config_path, SUPIR_sign=None):
+def create_SUPIR_model(config_path, SUPIR_sign=None, custom_sdxl_path=None):
 
     # Creates a SUPIR model instance by blending SDXL and SUPIR capabilities
     # 
@@ -44,6 +44,7 @@ def create_SUPIR_model(config_path, SUPIR_sign=None):
     # Args:
     #   config_path: Path to the YAML config file (options/SUPIR_v0_tiled.yaml or options/SUPIR_v0.yaml)
     #   SUPIR_sign: Optional variant specifier ('F' or 'Q') to load specialized weights
+    #   custom_sdxl_path: Optional path to override the SDXL checkpoint from config
     #
     # Returns:
     #   The instantiated and weight-loaded SUPIR model
@@ -57,7 +58,12 @@ def create_SUPIR_model(config_path, SUPIR_sign=None):
 
     # Load checkpoints using paths from config, checking existence
     # first the SDXL model
-    if hasattr(config, "SDXL_CKPT") and config.SDXL_CKPT is not None:
+    if custom_sdxl_path is not None:
+        # Use the custom SDXL path if provided
+        print(f"Loading SDXL checkpoint (custom): {custom_sdxl_path}", color.BRIGHT_BLUE)
+        model.load_state_dict(load_state_dict(custom_sdxl_path), strict=False)
+    elif hasattr(config, "SDXL_CKPT") and config.SDXL_CKPT is not None:
+        # Otherwise use the path from config
         print(f"Loading SDXL checkpoint: {config.SDXL_CKPT}", color.BRIGHT_BLUE)
         model.load_state_dict(load_state_dict(config.SDXL_CKPT), strict=False)
 
@@ -230,6 +236,25 @@ def Tensor2Numpy(x, h0=None, w0=None):
         x = x.squeeze(0)
     x = (x.permute(1, 2, 0) * 127.5 + 127.5).cpu().numpy().clip(0, 255).astype(np.uint8)
     return x
+
+
+def get_available_sdxl_models(models_dir="models/SDXL"):
+    """
+    Get list of available SDXL models in the models directory.
+    Returns a list of model names (without path) that can be used.
+    """
+    import glob
+    if not os.path.exists(models_dir):
+        return []
+    
+    # Find all .safetensors files in the SDXL directory
+    pattern = os.path.join(models_dir, "*.safetensors")
+    model_files = glob.glob(pattern)
+    
+    # Extract just the filenames
+    model_names = [os.path.basename(f) for f in model_files]
+    
+    return sorted(model_names)
 
 
 def convert_dtype(dtype_str):
